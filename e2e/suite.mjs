@@ -159,6 +159,16 @@ function recordBuild(surface, build, expected) {
   };
 }
 
+function compareParameters(left, right, names) {
+  const fields = names.map((name) => ({
+    name,
+    ui: left.parameters[name],
+    api: right.parameters[name],
+    equal: left.parameters[name] === right.parameters[name],
+  }));
+  return { fields, passed: fields.every((field) => field.equal) };
+}
+
 function addFailure(failures, scenario, surface, error) {
   failures.push({
     ...(scenario.parameterType ? { parameterType: scenario.parameterType } : {}),
@@ -249,12 +259,24 @@ export async function runActiveChoicesSuite(page, api, {
       const apiOutcome = recordSurface(failures, scenario, 'API', apiResult, expectedApi);
       const expectedDifference = isReference &&
         expectedUi[parameterName] !== expectedApi[parameterName];
-      let comparisonPassed = isReference;
-      if (!isReference && ui && apiResult) {
-        comparisonPassed = ui.parameters[parameterName] === apiResult.parameters[parameterName];
-        if (!comparisonPassed) {
+      let comparison;
+      if (ui && apiResult) {
+        comparison = compareParameters(ui, apiResult,
+          isReference ? ['PARENT'] : Object.keys(expectedUi));
+        if (!comparison.passed) {
           addFailure(failures, scenario, 'UI/API comparison',
-            new Error('recorded selector values differ'));
+            new Error('recorded parameter values differ'));
+        }
+        if (isReference) {
+          comparison.mode = expectedDifference ? 'surface-specific' : 'equal';
+          comparison.expectedSurfaceDifferences = expectedDifference ? [parameterName] : [];
+          if (expectedDifference) {
+            comparison.surfaceSpecificValues = [{
+              name: parameterName,
+              ui: ui.parameters[parameterName],
+              api: apiResult.parameters[parameterName],
+            }];
+          }
         }
       }
       results.push({
@@ -263,8 +285,8 @@ export async function runActiveChoicesSuite(page, api, {
         ui: uiResult,
         api: apiOutcome,
         expectedDifference,
-        comparisonPassed,
-        passed: Boolean(uiResult?.passed && apiOutcome?.passed && comparisonPassed),
+        comparison,
+        passed: Boolean(uiResult?.passed && apiOutcome?.passed && comparison?.passed),
       });
 
       if (isReactive) {
@@ -347,9 +369,10 @@ async function runReactiveDefaultCase({
   const expectedParameters = { PARENT: 'south', CHILD: expected };
   const uiOutcome = recordSurface(failures, scenario, 'UI default', ui, expectedParameters);
   const apiOutcome = recordSurface(failures, scenario, 'API default', apiResult, expectedParameters);
-  const comparisonPassed = Boolean(ui && apiResult &&
-    ui.parameters.CHILD === apiResult.parameters.CHILD);
-  if (ui && apiResult && !comparisonPassed) {
+  const comparison = ui && apiResult
+    ? compareParameters(ui, apiResult, ['PARENT', 'CHILD'])
+    : undefined;
+  if (comparison && !comparison.passed) {
     addFailure(failures, scenario, 'default comparison', new Error('UI and API defaults differ'));
   }
   results.push({
@@ -358,8 +381,8 @@ async function runReactiveDefaultCase({
     case: 'omitted child default',
     ui: uiOutcome,
     api: apiOutcome,
-    comparisonPassed,
-    passed: Boolean(uiOutcome?.passed && apiOutcome?.passed && comparisonPassed),
+    comparison,
+    passed: Boolean(uiOutcome?.passed && apiOutcome?.passed && comparison?.passed),
   });
 }
 
@@ -441,15 +464,17 @@ async function runChainedDefaults({ api, baseURL, failures, fixtures, page, pref
     uiSouth, southExpected);
   const southApiOutcome = recordSurface(failures, scenario, 'API posted-parent defaults',
     apiSouth, southExpected);
-  const northComparison = Boolean(uiNorth && apiNorth &&
-    JSON.stringify(uiNorth.parameters) === JSON.stringify(apiNorth.parameters));
-  const southComparison = Boolean(uiSouth && apiSouth &&
-    JSON.stringify(uiSouth.parameters) === JSON.stringify(apiSouth.parameters));
-  if (uiNorth && apiNorth && !northComparison) {
+  const northComparison = uiNorth && apiNorth
+    ? compareParameters(uiNorth, apiNorth, Object.keys(northExpected))
+    : undefined;
+  const southComparison = uiSouth && apiSouth
+    ? compareParameters(uiSouth, apiSouth, Object.keys(southExpected))
+    : undefined;
+  if (northComparison && !northComparison.passed) {
     addFailure(failures, scenario, 'omitted-parent UI/API comparison',
       new Error('chained defaults differ'));
   }
-  if (uiSouth && apiSouth && !southComparison) {
+  if (southComparison && !southComparison.passed) {
     addFailure(failures, scenario, 'posted-parent UI/API comparison',
       new Error('chained defaults differ'));
   }
@@ -457,12 +482,12 @@ async function runChainedDefaults({ api, baseURL, failures, fixtures, page, pref
     case: scenario.case,
     uiOmittedParent: northUiOutcome,
     apiOmittedParent: northApiOutcome,
-    omittedParentComparisonPassed: northComparison,
+    omittedParentComparison: northComparison,
     uiPostedParent: southUiOutcome,
     apiPostedParent: southApiOutcome,
-    postedParentComparisonPassed: southComparison,
-    passed: Boolean(northUiOutcome?.passed && northApiOutcome?.passed && northComparison &&
-      southUiOutcome?.passed && southApiOutcome?.passed && southComparison),
+    postedParentComparison: southComparison,
+    passed: Boolean(northUiOutcome?.passed && northApiOutcome?.passed && northComparison?.passed &&
+      southUiOutcome?.passed && southApiOutcome?.passed && southComparison?.passed),
   });
 }
 
@@ -560,7 +585,13 @@ async function runMapCase({ api, baseURL, failures, fixtures, page, prefix }) {
   }
 
   let ui;
+  let uiDefault;
   try {
+    uiDefault = await uiBuild(page, api, baseURL, name, {
+      parameterName: 'VALUE',
+      widget: 'PT_SINGLE_SELECT',
+      expectedParameters: { VALUE: ['key-b'] },
+    });
     const before = await buildNumbers(api, baseURL, name);
     await page.goto(`${baseURL}/job/${encodeURIComponent(name)}/build?delay=0sec`);
     const group = page.locator('div[name="parameter"]').filter({
@@ -609,16 +640,36 @@ async function runMapCase({ api, baseURL, failures, fixtures, page, prefix }) {
   } catch (error) {
     addFailure(failures, scenario, 'API map default', error);
   }
+  const uiDefaultOutcome = recordSurface(failures, scenario, 'UI default', uiDefault,
+    { VALUE: 'key-b' });
   const uiOutcome = recordSurface(failures, scenario, 'UI', ui, { VALUE: 'key-a' });
   const apiOutcome = recordSurface(failures, scenario, 'API', apiResult, { VALUE: 'key-a' });
   const defaultOutcome = recordSurface(failures, scenario, 'API default', apiDefault,
     { VALUE: 'key-b' });
+  const comparison = ui && apiResult
+    ? compareParameters(ui, apiResult, ['VALUE'])
+    : undefined;
+  if (comparison && !comparison.passed) {
+    addFailure(failures, scenario, 'UI/API comparison',
+      new Error('map option values differ'));
+  }
+  const defaultComparison = uiDefault && apiDefault
+    ? compareParameters(uiDefault, apiDefault, ['VALUE'])
+    : undefined;
+  if (defaultComparison && !defaultComparison.passed) {
+    addFailure(failures, scenario, 'default UI/API comparison',
+      new Error('map option defaults differ'));
+  }
   return {
     case: scenario.case,
+    uiDefault: uiDefaultOutcome,
     ui: uiOutcome,
     api: apiOutcome,
     apiDefault: defaultOutcome,
-    passed: Boolean(uiOutcome?.passed && apiOutcome?.passed && defaultOutcome?.passed),
+    comparison,
+    defaultComparison,
+    passed: Boolean(uiDefaultOutcome?.passed && uiOutcome?.passed && apiOutcome?.passed &&
+      defaultOutcome?.passed && comparison?.passed && defaultComparison?.passed),
   };
 }
 

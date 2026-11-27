@@ -6,10 +6,12 @@ drives the Build with Parameters form with Playwright, submits equivalent
 build parameters. It covers all 13 parameter/widget combinations exposed by
 this plugin revision.
 
-The UI and API do not have identical values for every Reactive Reference
-widget. The UI renders reference content and may submit a value-bearing HTML
-input; the API does not render that HTML. Expected values are defined per
-surface rather than treating every difference as equivalent behavior.
+For Choice and Cascade Choice widgets, the suite compares all recorded
+parameters from the UI and API builds, including parent values and computed
+defaults. Reactive Reference widgets have documented surface-specific values:
+the UI renders reference content and may submit a value-bearing HTML input,
+while the API does not render that HTML. Each surface is checked against its
+own expected value, and the report records any expected UI/API difference.
 
 ## Run against a test controller
 
@@ -41,8 +43,8 @@ fixture names, never authentication headers or trigger tokens.
 - Choice and Cascade Choice: single select, multi-select, radio, and checkbox.
 - Reactive Reference: read-only text box, ordered list, unordered list,
   formatted HTML, and formatted hidden HTML.
-- UI/API parity for selector values, including stored map keys rather than
-  display labels.
+- UI/API parity for selector values and map defaults, including stored map keys
+  rather than display labels.
 - Cascading parent updates and API computed defaults when the child is omitted
   for single-select, multi-select, radio, and checkbox widgets.
 - An option-off control to verify that reference-based defaults remain opt-in.

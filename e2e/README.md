@@ -6,10 +6,10 @@ drives the Build with Parameters form with Playwright, submits equivalent
 build parameters. It covers all 13 parameter/widget combinations exposed by
 this plugin revision.
 
-The two paths are not equivalent for every Reactive Reference widget. The UI
-renders reference content and may submit a value-bearing HTML input; the API
-does not render that HTML. The suite asserts those documented differences
-explicitly instead of treating them as selector parity.
+The UI and API do not have identical values for every Reactive Reference
+widget. The UI renders reference content and may submit a value-bearing HTML
+input; the API does not render that HTML. Expected values are defined per
+surface rather than treating every difference as equivalent behavior.
 
 ## Run against a test controller
 
@@ -28,9 +28,13 @@ JENKINS_EXPECTED_PLUGIN_VERSION=2.8.12-rc1516.6ea_e25cc8101 \
 npm test
 ```
 
-The suite checks the installed `uno-choice` version before creating jobs. It
-uses uniquely named fixtures and deletes them in a `finally` block. A failure
-report contains parameter values and job names, never authentication headers.
+The runner verifies that both authenticated contexts identify as the requested
+Jenkins user before creating jobs. API credentials are restricted to the
+configured Jenkins origin. Webhook requests use a separate unauthenticated
+request context. The suite checks the installed `uno-choice` version before
+creating jobs, uses uniquely named fixtures, and verifies deletion in a
+`finally` block. Reports include build and queue IDs, parameter values, and
+fixture names, never authentication headers or trigger tokens.
 
 ## What it checks
 
@@ -39,16 +43,21 @@ report contains parameter values and job names, never authentication headers.
   formatted HTML, and formatted hidden HTML.
 - UI/API parity for selector values, including stored map keys rather than
   display labels.
-- Cascading parent updates and API computed defaults when the child is omitted.
+- Cascading parent updates and API computed defaults when the child is omitted
+  for single-select, multi-select, radio, and checkbox widgets.
+- An option-off control to verify that reference-based defaults remain opt-in.
 - Reference display refresh, HTML value submission, and expected server-side
   default differences.
 - Anonymous Build Authorization Token Root requests used as inbound webhook-style
-  triggers. The suite verifies that posted reference values do not override the
-  fallback when the caller lacks authenticated Build permission.
+  triggers, separately checking that anonymous standard builds are rejected and
+  token-root requests retain the fallback default.
+- Rendered element type, selected values, text-box read-only state, and visible
+  versus hidden HTML behavior.
 
 This suite does not grant Jenkins Script Approval. The copied/renamed-job
 identity behavior that needs access to `jenkinsProject` is covered by the
 plugin's isolated JenkinsRule tests, where approvals are scoped to the test.
 It tests the installed Build Authorization Token Root endpoint; it cannot test
 SCM-specific webhook payload mappings because this controller has no SCM
-webhook plugin installed.
+webhook plugin installed. Pipeline and CLI trigger paths remain covered by the
+plugin's JenkinsRule tests rather than this live-controller suite.
